@@ -611,9 +611,9 @@ async def non_stream_request(
 
                 # 将该凭证的preview状态设置为False
                 try:
-                    await credential_manager.update_credential_state(
-                        current_file, {"preview": False}, mode="geminicli"
-                    )
+                    #await credential_manager.update_credential_state(
+                    #    current_file, {"preview": False}, mode="geminicli"
+                    #)
                     log.info(f"[NON-STREAM] 已将凭证 {current_file} 的preview状态设置为False")
                 except Exception as e:
                     log.error(f"[NON-STREAM] 更新凭证preview状态失败: {e}")
