@@ -285,34 +285,32 @@ async def stream_request(
 
                         # 将该凭证的preview状态设置为False
                         try:
-                            await credential_manager.update_credential_state(
-                                current_file, {"preview": False}, mode="geminicli"
-                            )
-                            log.info(f"[GEMINICLI STREAM] 已将凭证 {current_file} 的preview状态设置为False")
-                        except Exception as e:
+                                                       #await credential_manager.update_credential_state(
+                             #   current_file, {"preview": False}, mode="geminicli"
+                            #)
                             log.error(f"[GEMINICLI STREAM] 更新凭证preview状态失败: {e}")
 
                         # 记录404错误
-                        await record_api_call_error(
-                            credential_manager, current_file, status_code,
-                            None, mode="geminicli", model_name=model_name,
-                            error_message=error_body
-                        )
+                        #  await record_api_call_error(
+                           # credential_manager, current_file, status_code,
+                            #None, mode="geminicli", model_name=model_name,
+                            #error_message=error_body
+                        #)
 
                         # 预热下一个凭证（会自动跳过preview=False的凭证）
-                        if next_cred_task is None and attempt < max_retries:
-                            next_cred_task = asyncio.create_task(
-                                credential_manager.get_valid_credential(
-                                    mode="geminicli", model_name=model_name
-                                )
-                            )
+                        #if next_cred_task is None and attempt < max_retries:
+                         #   next_cred_task = asyncio.create_task(
+                          #      credential_manager.get_valid_credential(
+                           #         mode="geminicli", model_name=model_name
+                            #    )
+                            #)
 
                         # 触发重试
-                        if attempt < max_retries:
-                            need_retry = True
-                            break
-                        else:
-                            log.error(f"[GEMINICLI STREAM] 达到最大重试次数，返回404错误")
+                        #if attempt < max_retries:
+                            #need_retry = True
+                        #    break
+                        #else:
+                        #    log.error(f"[GEMINICLI STREAM] 达到最大重试次数，返回404错误")
                             yield chunk
                             return
                     else:
