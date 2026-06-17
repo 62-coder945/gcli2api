@@ -619,40 +619,21 @@ async def non_stream_request(
                     log.error(f"[NON-STREAM] 更新凭证preview状态失败: {e}")
 
                 # 记录404错误
-                await record_api_call_error(
-                    credential_manager, current_file, status_code,
-                    None, mode="geminicli", model_name=model_name,
-                    error_message=error_text
-                )
+                
 
                 # 预热下一个凭证（会自动跳过preview=False的凭证）
-                if next_cred_task is None and attempt < max_retries:
-                    next_cred_task = asyncio.create_task(
-                        credential_manager.get_valid_credential(
-                            mode="geminicli", model_name=model_name
-                        )
-                    )
+                #if next_cred_task is None and attempt < max_retries:
+                 #   next_cred_task = asyncio.create_task(
+                  #      credential_manager.get_valid_credential(
+                   #         mode="geminicli", model_name=model_name
+                    #    )
+                    #)
 
                 # 触发重试
-                if attempt < max_retries:
-                    log.info(f"[NON-STREAM] 重试请求 (attempt {attempt + 2}/{max_retries + 1})...")
-
-                    switched, next_cred_task = await _switch_credential_for_retry(
-                        next_cred_task=next_cred_task,
-                        retry_interval=retry_interval,
-                        refresh_credential_fast=refresh_credential_fast,
-                        apply_cred_result=apply_cred_result,
-                        log_prefix="[NON-STREAM]",
-                    )
-                    if not switched:
-                        log.error("[NON-STREAM] 重试时无可用凭证或刷新失败")
-                        return Response(
-                            content=json.dumps({"error": "当前无可用凭证"}),
-                            status_code=500,
-                            media_type="application/json"
-                        )
-                    continue  # 重试
-                else:
+                #if attempt < max_retries:
+                    #log.info(f"[NON-STREAM] 重试请求 (attempt {attempt + 2}/{max_retries + 1})...")
+                    #continue  # 重试
+                #else:
                     log.error(f"[NON-STREAM] 达到最大重试次数，返回404错误")
                     return last_error_response
             else:
