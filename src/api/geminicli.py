@@ -15,7 +15,7 @@ if __name__ == "__main__":
 
 import asyncio
 import json
-from typing import Any, Dict, Optional, Callable, Tuple
+from typing import Any, Dict, Optional
 
 from fastapi import Response
 from config import get_code_assist_endpoint, get_auto_ban_error_codes
@@ -80,38 +80,6 @@ async def prepare_request_headers_and_payload(
     }
 
     return headers, final_payload, target_url
-
-
-def _is_retryable_status(status_code: int, disable_error_codes: list[int]) -> bool:
-    """统一判断是否属于可重试状态码。"""
-    return status_code in (429, 500, 503) or status_code in disable_error_codes
-
-
-async def _switch_credential_for_retry(
-    *,
-    next_cred_task: Optional[asyncio.Task],
-    retry_interval: float,
-    refresh_credential_fast: Callable[[], Any],
-    apply_cred_result: Callable[[Tuple[str, Dict[str, Any]]], bool],
-    log_prefix: str,
-) -> Tuple[bool, Optional[asyncio.Task]]:
-    """优先使用预热凭证，失败后退回同步刷新。"""
-    if next_cred_task is not None:
-        try:
-            cred_result = await next_cred_task
-            next_cred_task = None
-            if cred_result and apply_cred_result(cred_result):
-                await asyncio.sleep(retry_interval)
-                return True, next_cred_task
-        except Exception as e:
-            log.warning(f"{log_prefix} 预热凭证任务失败: {e}")
-            next_cred_task = None
-
-    await asyncio.sleep(retry_interval)
-    if await refresh_credential_fast():
-        return True, next_cred_task
-
-    return False, next_cred_task
 
 
 # ==================== 新的流式和非流式请求函数 ====================
@@ -203,17 +171,6 @@ async def stream_request(
         except Exception:
             return None
 
-    def apply_cred_result(cred_result: Tuple[str, Dict[str, Any]]) -> bool:
-        nonlocal current_file, credential_data, auth_headers, final_payload
-        current_file, credential_data = cred_result
-        token = credential_data.get("token") or credential_data.get("access_token", "")
-        project_id = credential_data.get("project_id", "")
-        if not token or not project_id:
-            return False
-        auth_headers["Authorization"] = f"Bearer {token}"
-        final_payload["project"] = project_id
-        return True
-
     for attempt in range(max_retries + 1):
         success_recorded = False  # 标记是否已记录成功
         need_retry = False  # 标记是否需要重试
@@ -238,7 +195,7 @@ async def stream_request(
                         error_body = ""
 
                     # 如果错误码是429、503或者在禁用码当中，做好记录后进行重试
-                    if _is_retryable_status(status_code, DISABLE_ERROR_CODES):
+                    if status_code == 429 or status_code == 503 or status_code in DISABLE_ERROR_CODES:
                         log.warning(f"[GEMINICLI STREAM] 流式请求失败 (status={status_code}), 凭证: {current_file}, 响应: {error_body[:500] if error_body else '无'}")
 
                         # 解析冷却时间
@@ -285,9 +242,11 @@ async def stream_request(
 
                         # 将该凭证的preview状态设置为False
                         try:
-                                                       #await credential_manager.update_credential_state(
+                            #await credential_manager.update_credential_state(
                              #   current_file, {"preview": False}, mode="geminicli"
                             #)
+                            log.info(f"[GEMINICLI STREAM] 已将凭证 {current_file} 的preview状态设置为False")
+                        except Exception as e:
                             log.error(f"[GEMINICLI STREAM] 更新凭证preview状态失败: {e}")
 
                         # 记录404错误
@@ -316,71 +275,7 @@ async def stream_request(
                     else:
                         # 错误码不在禁用码当中，直接返回，无需重试
                         log.error(f"[GEMINICLI STREAM] 流式请求失败，非重试错误码 (status={status_code}), 凭证: {current_file}, 响应: {error_body[:500] if error_body else '无'}")
-                        await record_api_call_error(
-                            credential_manager, current_file, status_code,
-                            None, mode="geminicli", model_name=model_name,
-                            error_message=error_body
-                        )
-                        yield chunk
-                        return
-                else:
-                    # 不是Response，说明是真流，直接yield返回
-                    # 只在第一个chunk时记录成功
-                    if not success_recorded:
-                        await record_api_call_success(
-                            credential_manager, current_file, mode="geminicli", model_name=model_name
-                        )
-                        success_recorded = True
-                        log.debug(f"[GEMINICLI STREAM] 开始接收流式响应，模型: {model_name}")
-
-                    yield chunk
-
-            # 流式请求完成，检查结果
-            if success_recorded:
-                log.debug(f"[GEMINICLI STREAM] 流式响应完成，模型: {model_name}")
-                return
-
-            # 统一处理重试
-            if need_retry:
-                # 如果已经是最后一次尝试，不再重试，直接返回错误
-                if attempt >= max_retries:
-                    log.error(f"[GEMINICLI STREAM] 达到最大重试次数，返回错误")
-                    if last_error_response:
-                        yield last_error_response
-                    else:
-                        yield Response(
-                            content=json.dumps({"error": "请求失败，所有重试均已耗尽"}),
-                            status_code=429,
-                            media_type="application/json"
-                        )
-                    return
-
-                log.info(f"[GEMINICLI STREAM] 重试请求 (attempt {attempt + 2}/{max_retries + 1})...")
-
-                switched, next_cred_task = await _switch_credential_for_retry(
-                    next_cred_task=next_cred_task,
-                    retry_interval=retry_interval,
-                    refresh_credential_fast=refresh_credential_fast,
-                    apply_cred_result=apply_cred_result,
-                    log_prefix="[GEMINICLI STREAM]",
-                )
-                if not switched:
-                    log.error("[GEMINICLI STREAM] 重试时无可用凭证或刷新失败")
-                    yield Response(
-                        content=json.dumps({"error": "当前无可用凭证"}),
-                        status_code=500,
-                        media_type="application/json"
-                    )
-                    return
-                continue  # 重试
-
-        except Exception as e:
-            log.error(f"[GEMINICLI STREAM] 流式请求异常: {e}, 凭证: {current_file}")
-            if attempt < max_retries:
-                log.info(f"[GEMINICLI STREAM] 异常后重试 (attempt {attempt + 2}/{max_retries + 1})...")
-                await asyncio.sleep(retry_interval)
-                continue
-            else:
+                                 else:
                 # 所有重试都失败，返回最后一次的错误（如果有）
                 log.error(f"[GEMINICLI STREAM] 所有重试均失败，最后异常: {e}")
                 if last_error_response:
